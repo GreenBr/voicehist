@@ -47,7 +47,7 @@ voicehist 的流程刻意反过来：
 ## 安装
 
 ```powershell
-git clone https://github.com/<你的帐号>/voicehist.git
+git clone https://github.com/GreenBr/voicehist.git
 cd voicehist
 .\install.ps1
 ```

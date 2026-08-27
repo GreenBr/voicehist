@@ -1,5 +1,5 @@
 # voicehist 一键安装 (Windows / PowerShell)
-#   iwr -useb https://raw.githubusercontent.com/<你的帐号>/voicehist/main/install.ps1 | iex
+#   iwr -useb https://raw.githubusercontent.com/GreenBr/voicehist/main/install.ps1 | iex
 # 或 clone 之后直接： .\install.ps1
 
 $ErrorActionPreference = "Stop"
