@@ -1,7 +1,26 @@
 # -*- coding: utf-8 -*-
 """voicehist 设定视窗 - 改完存档，重启主程式即生效"""
-import sys, os, json
+import sys, os, json, ctypes
 import tkinter as tk
+
+WIN_TITLE = "voicehist 设定"
+
+
+def single_instance_or_focus(mutex_name, title):
+    """同一个视窗只开一份。已经开著的话就把它叫到最前面，然後结束自己。"""
+    k = ctypes.windll.kernel32
+    k.CreateMutexW(None, False, mutex_name)
+    if k.GetLastError() != 183:        # ERROR_ALREADY_EXISTS
+        return True
+    u = ctypes.windll.user32
+    hwnd = u.FindWindowW(None, title)
+    if hwnd:
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, 9)
+        u.SetForegroundWindow(hwnd)
+        u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0002 | 0x0001)
+        u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0002 | 0x0001)
+    return False
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -67,7 +86,7 @@ class App:
         self.cfg = load()
         self.vars = {}
 
-        root.title("voicehist 设定")
+        root.title(WIN_TITLE)
         root.configure(bg=BG)
         root.geometry("760x720")
         try:
@@ -189,6 +208,7 @@ class App:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    if single_instance_or_focus("voicehist_settings_gui_mutex_v1", WIN_TITLE):
+        root = tk.Tk()
+        App(root)
+        root.mainloop()

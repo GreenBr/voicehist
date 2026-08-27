@@ -1,8 +1,28 @@
 # -*- coding: utf-8 -*-
 """语音历史检视器 - 深色卡片式介面，点一下就复制到剪贴板"""
-import sys, os, json, time
+import sys, os, json, time, ctypes
 import tkinter as tk
-from tkinter import font as tkfont
+
+WIN_TITLE = "语音历史"
+
+
+def single_instance_or_focus(mutex_name, title):
+    """同一个视窗只开一份。已经开著的话就把它叫到最前面，然後结束自己。
+    回传 True 表示可以继续开新视窗。"""
+    k = ctypes.windll.kernel32
+    k.CreateMutexW(None, False, mutex_name)
+    if k.GetLastError() != 183:        # ERROR_ALREADY_EXISTS
+        return True
+    u = ctypes.windll.user32
+    hwnd = u.FindWindowW(None, title)
+    if hwnd:
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, 9)      # SW_RESTORE
+        u.SetForegroundWindow(hwnd)
+        # SetForegroundWindow 在非前景行程会被挡，用置顶闪一下当後备
+        u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0002 | 0x0001)   # HWND_TOPMOST
+        u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0002 | 0x0001)   # HWND_NOTOPMOST
+    return False
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -43,7 +63,7 @@ class App:
         self.all = load()
         self.cards = []
 
-        root.title("语音历史")
+        root.title(WIN_TITLE)
         root.configure(bg=BG)
         root.geometry("880x640")
         try:
@@ -264,6 +284,7 @@ class App:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    if single_instance_or_focus("voicehist_history_gui_mutex_v1", WIN_TITLE):
+        root = tk.Tk()
+        App(root)
+        root.mainloop()
