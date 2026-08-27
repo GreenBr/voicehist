@@ -104,6 +104,7 @@ DEFAULT_CFG = {
     # --- 断句 / 标点 ---
     "pause_space": 0.35,    # 停顿超过这秒数 -> 插入空格
     "pause_newline": 1.0,   # 停顿超过这秒数 -> 换行
+    "fix_punctuation": True,  # 修掉 Whisper 滥用的全形冒号
     "initial_prompt": "以下是繁體中文的句子，會夾雜英文技術名詞。例如：幫我重構那個 middleware，然後跑一次測試，順便看一下 log。",
     "auto_paste": True,
     # 剪贴簿策略：
@@ -283,6 +284,26 @@ class Rec:
         return np.concatenate(ch, axis=0).flatten()
 
 
+def fix_punctuation(text):
+    """Whisper 会模仿 initial_prompt 里出现过的标点。
+    实测踩过两次：范例里放三个问号 -> 问号泛滥；出现一个「例如：」-> 整段冒号泛滥
+    （一句 25 秒的话被塞了 7 个冒号，零个句号）。
+
+    中文口语几乎用不到全形冒号，所以一律换掉：句尾的换句号，句中的换逗号。
+    半形冒号保留不动 —— 时间 10:30、网址、key: value 都需要它。
+    """
+    if not C.get("fix_punctuation", True):
+        return text
+    out = []
+    for i, ch in enumerate(text):
+        if ch == "：":                     # 全形冒号
+            rest = text[i + 1:].strip()
+            out.append("。" if not rest else "，")   # 句号 / 逗号
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def join_segments(segs):
     """Whisper 回传的 segment 本来就是照停顿切的。
     照实际停顿长度还原成空格／换行，而不是全部黏成一坨。"""
@@ -301,7 +322,7 @@ def join_segments(segs):
                 out.append(" ")
         out.append(t)
         prev_end = s.end
-    text = "".join(out).strip()
+    text = fix_punctuation("".join(out).strip())
     # Whisper 常在结尾多留一个逗号／顿号，清掉
     while text and text[-1] in "，,、 ":
         text = text[:-1].rstrip()
