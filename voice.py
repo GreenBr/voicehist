@@ -120,8 +120,8 @@ DEFAULT_CFG = {
     "indicator_pos": "br",
     "ui_scale": 2.1,        # 高度／字体倍率（原本 3.0 的 70%）
     "ui_width_scale": 1.5,  # 宽度倍率（原本 3.0 的一半）
-    "stop_key": None,       # 录音中额外的「停止并转写」键；预设不设，用热键本身停
-    "cancel_key": "esc",    # 录音／转写中按这个直接丢弃，不转写也不留纪录
+    "stop_key": "esc",        # 录音中按这个停止并转写（单键，不用按组合键）
+    "cancel_key": "delete",   # 录音／转写中按这个直接丢弃，不转写也不留纪录
 }
 
 
