@@ -101,14 +101,45 @@ class App:
         root.bind("<F5>", lambda e: self.reload())
         self.render()
 
+        # 盯著 history.jsonl，一有新纪录就自动长出来，不用关掉重开
+        self._sig = self._file_sig()
+        self.watch()
+
     def _center(self):
         self.root.update_idletasks()
         w, h = 880, 640
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         self.root.geometry("%dx%d+%d+%d" % (w, h, (sw - w) // 2, (sh - h) // 3))
 
+    def _file_sig(self):
+        """用 (修改时间, 档案大小) 当指纹，够便宜也够准"""
+        try:
+            st = os.stat(HIST)
+            return (st.st_mtime, st.st_size)
+        except OSError:
+            return None
+
+    def watch(self):
+        """每秒看一下档案有没有变。没变就什么都不做，
+        变了才重画 —— 所以平常几乎不吃资源。"""
+        sig = self._file_sig()
+        if sig != self._sig:
+            self._sig = sig
+            before = len(self.all)
+            keep_pos = self.cv.yview()[0]
+            self.all = load()
+            self.render()
+            # 本来就在最上面就留在最上面（新的排在最前，会自己跳出来）
+            if keep_pos > 0.01:
+                self.cv.yview_moveto(keep_pos)
+            added = len(self.all) - before
+            if added > 0:
+                self.flash("刚讲的话已加入（+%d 则）" % added, OK)
+        self.root.after(1000, self.watch)
+
     def reload(self):
         self.all = load()
+        self._sig = self._file_sig()
         self.render()
         self.flash("已重新载入", OK)
 
