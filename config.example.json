@@ -14,5 +14,7 @@
   "indicator": true,
   "indicator_pos": "br",
   "ui_scale": 2.1,
-  "ui_width_scale": 1.5
+  "ui_width_scale": 1.5,
+  "clipboard": "restore",
+  "restore_delay": 0.35
 }

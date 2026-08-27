@@ -98,6 +98,12 @@ DEFAULT_CFG = {
     "pause_newline": 1.0,   # 停顿超过这秒数 -> 换行
     "initial_prompt": "以下是繁體中文的句子，會夾雜英文技術名詞。例如：幫我重構那個 middleware，然後跑一次測試，順便看一下 log。",
     "auto_paste": True,
+    # 剪贴簿策略：
+    #   restore = 贴上後把剪贴簿还原成你原本复制的东西（预设，不干扰你）
+    #   keep    = 转写结果留在剪贴簿里（旧行为）
+    #   none    = 完全不碰剪贴簿，也不自动贴上，只写历史
+    "clipboard": "restore",
+    "restore_delay": 0.35,   # 还原前等多久，确保 Ctrl+V 已经贴完
     "beep": True,
     "sample_rate": 16000,
     "idle_unload_minutes": 5,   # 闲置这么久就释放显存；0 = 一直常驻
@@ -394,19 +400,41 @@ class App:
             print("  → 没听到内容\n")
             return
 
-        try:
-            pyperclip.copy(text)
-        except Exception as e:
-            print("  [注意] 复制剪贴板失败：%s" % e)
-
         pasted = False
-        if C["auto_paste"]:
+        mode = str(C.get("clipboard", "restore")).lower()
+
+        if mode == "none":
+            # 完全不碰剪贴板。历史已经留底，要用就去历史视窗手动复制。
+            print("  [剪贴板] 未使用（clipboard=none）")
+        else:
+            backup = None
+            if mode == "restore":
+                try:
+                    backup = pyperclip.paste()
+                except Exception:
+                    backup = None
             try:
-                time.sleep(0.15)
-                keyboard.send("ctrl+v")
-                pasted = True
+                pyperclip.copy(text)
             except Exception as e:
-                print("  [注意] 自动贴上失败（历史已留底）：%s" % e)
+                print("  [注意] 复制剪贴板失败：%s" % e)
+
+            if C["auto_paste"]:
+                try:
+                    time.sleep(0.15)
+                    keyboard.send("ctrl+v")
+                    pasted = True
+                except Exception as e:
+                    print("  [注意] 自动贴上失败（历史已留底）：%s" % e)
+
+            # 只在原本确实有文字时才还原。否则会把剪贴板清空
+            # （图片、档案等非文字内容 pyperclip 读不到，会回传空字串）
+            if mode == "restore" and backup:
+                try:
+                    time.sleep(float(C.get("restore_delay", 0.35)))
+                    pyperclip.copy(backup)
+                    print("  [剪贴板] 已还原成你原本的内容")
+                except Exception as e:
+                    print("  [注意] 剪贴板还原失败：%s" % e)
 
         save_history(text, lang, dur, title, pasted)
         self.last_use = time.time()

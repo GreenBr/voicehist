@@ -36,7 +36,13 @@ FIELDS = [
     ("pause_newline", "停顿多久换行", "单位秒，预设 1.0", "float", None),
 
     ("__g", "行为", None, None, None),
-    ("auto_paste", "转写完自动贴上", "关掉的话只会复制到剪贴板，不主动贴", "bool", None),
+    ("auto_paste", "转写完自动贴上", "关掉的话不会主动贴，要自己去历史视窗复制", "bool", None),
+    ("clipboard", "剪贴板策略",
+     "restore = 贴上後还原成你原本复制的东西（推荐，不会洗掉你的剪贴板）\n"
+     "keep = 转写结果留在剪贴板里\n"
+     "none = 完全不碰剪贴板，也不自动贴上，只写历史",
+     "choice", ["restore", "keep", "none"]),
+    ("restore_delay", "还原前等待秒数", "太短可能在贴上完成前就还原了，预设 0.35", "float", None),
     ("beep", "提示音", "开始／停止录音时的哔声", "bool", None),
 
     ("__g", "指示灯", None, None, None),
