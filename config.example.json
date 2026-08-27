@@ -4,7 +4,7 @@
   "model": "medium",
   "beam_size": 1,
   "language": null,
-  "initial_prompt": "以下是繁體中文的句子，會夾雜英文技術名詞。例如：幫我重構那個 middleware，然後跑一次測試，順便看一下 log。",
+  "initial_prompt": "以下是繁體中文的口語，會夾雜英文技術名詞。陳述句用逗號和句號，只有真正在提問的時候才用問號。幫我重構那個 middleware，然後跑一次測試，順便看一下 log 有沒有錯誤，改完記得回報結果。先確認一下，我剛剛傳的那個檔案你收到了嗎？",
   "pause_space": 0.35,
   "pause_newline": 1.0,
   "auto_paste": true,
@@ -16,5 +16,7 @@
   "ui_scale": 2.1,
   "ui_width_scale": 1.5,
   "clipboard": "restore",
-  "restore_delay": 0.35
+  "restore_delay": 0.35,
+  "cancel_key": "delete",
+  "fix_punctuation": true
 }

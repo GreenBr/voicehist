@@ -38,7 +38,9 @@ FIELDS = [
     ("__g", "热键", None, None, None),
     ("hotkey", "启动／停止录音", "预设 ctrl+space。若跟中文输入法的中英切换打架，改成 ctrl+alt+space",
      "text", None),
-    ("stop_key", "额外的停止键", "只在录音中生效，平时不拦截。留空则关闭", "text", None),
+    ("stop_key", "停止并转写（单键）", "录音中按这个就结束并转写，不用按组合键。留空则关闭",
+     "text", None),
+    ("cancel_key", "取消这一段", "误触时按这个直接丢弃，不转写、不进剪贴板、不写历史。" + chr(10) + "只在录音中或转写中生效，平时完全不拦截", "text", None),
 
     ("__g", "效能", None, None, None),
     ("idle_unload_minutes", "闲置几分钟释放显存",
@@ -53,6 +55,9 @@ FIELDS = [
      "喂一句带标点的范例，Whisper 就会照著加标点、也会偏向繁体。留空则不引导", "text", None),
     ("pause_space", "停顿多久插空格", "单位秒，预设 0.35", "float", None),
     ("pause_newline", "停顿多久换行", "单位秒，预设 1.0", "float", None),
+    ("fix_punctuation", "修正滥用的全形冒号",
+     "Whisper 会模仿引导句里的标点，有时整段乱塞冒号。开启後句尾的全形冒号" + chr(10) + "换成句号、句中换逗号。半形冒号不动（时间 10:30、网址、key: value 需要它）",
+     "bool", None),
 
     ("__g", "行为", None, None, None),
     ("auto_paste", "转写完自动贴上", "关掉的话不会主动贴，要自己去历史视窗复制", "bool", None),
