@@ -1,0 +1,18 @@
+{
+  "hotkey": "ctrl+space",
+  "stop_key": "esc",
+  "model": "medium",
+  "beam_size": 1,
+  "language": null,
+  "initial_prompt": "以下是繁體中文的句子，會夾雜英文技術名詞。例如：幫我重構那個 middleware，然後跑一次測試，順便看一下 log。",
+  "pause_space": 0.35,
+  "pause_newline": 1.0,
+  "auto_paste": true,
+  "beep": true,
+  "sample_rate": 16000,
+  "idle_unload_minutes": 5,
+  "indicator": true,
+  "indicator_pos": "br",
+  "ui_scale": 2.1,
+  "ui_width_scale": 1.5
+}

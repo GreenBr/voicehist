@@ -1,0 +1,10 @@
+faster-whisper
+sounddevice
+pyperclip
+keyboard
+pillow
+pystray
+
+# 有 NVIDIA 显示卡才需要（install.ps1 会自动判断）
+# nvidia-cublas-cu12
+# nvidia-cudnn-cu12

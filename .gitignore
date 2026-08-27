@@ -1,0 +1,15 @@
+# 虚拟环境（由 install.ps1 重建）
+venv/
+
+# 个人资料 —— 绝对不要 commit
+history.jsonl
+voicehist.log
+config.json
+
+# 模型快取
+*.bin
+*.pt
+
+# Python
+__pycache__/
+*.py[cod]
