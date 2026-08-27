@@ -120,7 +120,8 @@ DEFAULT_CFG = {
     "indicator_pos": "br",
     "ui_scale": 2.1,        # 高度／字体倍率（原本 3.0 的 70%）
     "ui_width_scale": 1.5,  # 宽度倍率（原本 3.0 的一半）
-    "stop_key": "esc",      # 录音中额外的停止键；设成 null 可关掉
+    "stop_key": None,       # 录音中额外的「停止并转写」键；预设不设，用热键本身停
+    "cancel_key": "esc",    # 录音／转写中按这个直接丢弃，不转写也不留纪录
 }
 
 
@@ -166,10 +167,12 @@ class S:
     msg = ""
     model_loaded = False
     quit = False
+    cancelled = False      # 使用者按了取消键，这轮录音整个作废
 
 
 class Indicator:
-    COLORS = {"idle": "#5a5f66", "rec": "#e5484d", "trans": "#f5a524", "done": "#30a46c"}
+    COLORS = {"idle": "#5a5f66", "rec": "#e5484d", "trans": "#f5a524",
+              "done": "#30a46c", "cancel": "#8b929e"}
 
     def __init__(self, root):
         self.root = root
@@ -243,6 +246,8 @@ class Indicator:
                 self.txt.config(text="待机" if S.model_loaded else "载入中…")
             elif m == "trans":
                 self.txt.config(text="转写中…")
+            elif m == "cancel":
+                self.txt.config(text="已取消")
             else:
                 self.txt.config(text=(S.msg[:12] or "完成"))
             self.bar.coords(self.fill, 0, 0, 0, self.barh)
@@ -377,6 +382,7 @@ class App:
         with self.lock:
             if not self.on:
                 self.on = True
+                S.cancelled = False
                 S.t0 = time.time()
                 S.mode = "rec"
                 self.rec.start()
@@ -393,6 +399,29 @@ class App:
                 threading.Thread(target=self.work, args=(audio, dur, title),
                                  daemon=True).start()
 
+    def cancel(self, _event=None):
+        """取消键：把这轮整个丢掉。
+
+        误触热键录了几分钟，本来还得等它转写完、再把不要的文字从输入框删掉。
+        现在录音中或转写中按下取消，音讯直接丢弃，不转写、不进剪贴板、
+        也不写进历史 —— 当作没发生过。
+        """
+        with self.lock:
+            if self.on:
+                self.on = False
+                self.rec.stop()
+                dur = time.time() - S.t0
+                S.cancelled = True
+                S.mode = "cancel"
+                beep(400, 140)
+                print("✕ 已取消（录了 %.1fs，不转写）" % dur)
+                self._back()
+            elif S.mode == "trans":
+                # 已经在转写了，设旗标让结果被丢弃
+                S.cancelled = True
+                beep(400, 140)
+                print("✕ 转写中止，结果将丢弃")
+
     def stop_if_recording(self, _event=None):
         """停止键（预设 ESC）：只在录音中才动作，
         平时完全不拦截，ESC 在别的程式照常用。"""
@@ -400,6 +429,8 @@ class App:
             self.toggle()
 
     def work(self, audio, dur, title):
+        if S.cancelled:
+            return
         if audio.size < C["sample_rate"] * 0.3:
             S.msg = "太短"
             S.mode = "done"
@@ -420,6 +451,12 @@ class App:
             S.mode = "done"
             self._back()
             print("  → 转写失败：%s\n" % e)
+            return
+
+        if S.cancelled:
+            print("  → 已取消，丢弃转写结果" + chr(10))
+            S.mode = "cancel"
+            self._back()
             return
 
         if not text:
@@ -552,6 +589,9 @@ def main():
     print("  模型：%s   语言：%s" % (C["model"], C["language"] or "自动侦测"))
     if C.get("idle_unload_minutes"):
         print("  闲置 %s 分钟自动释放显存" % C["idle_unload_minutes"])
+    ck0 = C.get("cancel_key")
+    if ck0:
+        print("  录音中按 %s 可直接取消，不转写" % ck0.upper())
     sk = C.get("stop_key")
     if sk:
         print("  按热键开始录音；再按一次热键 或 按 %s 停止" % sk.upper())
@@ -565,6 +605,9 @@ def main():
     keyboard.add_hotkey(hk, app.toggle, suppress=False)
     if sk:
         keyboard.on_press_key(sk, app.stop_if_recording, suppress=False)
+    ck = C.get("cancel_key")
+    if ck:
+        keyboard.on_press_key(ck, app.cancel, suppress=False)
     tray = setup_tray()
 
     if C.get("indicator", True):
