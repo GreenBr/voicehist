@@ -52,7 +52,7 @@ cd voicehist
 .\install.ps1
 ```
 
-装完桌面会出现 **VoiceInput** 和 **VoiceHistory** 两个图示。
+装完桌面会出现一个 **voicehist** 图示。
 
 > 第一次启动会下载约 1.5GB 的 Whisper 模型，请等它跑完（之后都是本地读取，很快）。
 
@@ -60,12 +60,15 @@ cd voicehist
 
 ## 使用
 
+**一个图示就是全部入口。** 双击桌面的 **voicehist** 让它进入待命，之后随时按热键讲话。
+程式已经在跑时再点同一个图示，会直接开启历史视窗。
+
 | 动作 | 按键 |
 |---|---|
+| 启动待命 | 双击桌面 **voicehist** |
 | 开始录音 | `Ctrl + 空白` |
 | 停止并转写 | `Ctrl + 空白` 或 `ESC` |
-| 开启程式 | 双击桌面 **VoiceInput** |
-| 看历史 | 双击 **VoiceHistory**，或系统匣图示右键 |
+| 看历史 | 系统匣图示右键 → 开启语音历史（或再点一次桌面图示）|
 | 改设定 | 系统匣图示右键 → 设定 |
 | 结束程式 | 系统匣图示右键 → 结束 |
 
@@ -178,13 +181,13 @@ Whisper 转中文时**预设不太加标点**（[已知问题](https://github.co
 ## 疑难排解
 
 **按热键没反应**
-指示灯有出现吗？没有的话程式没在跑，双击 VoiceInput。有的话可能是热键被中文输入法吃掉了，改成 `ctrl+alt+space`。
+指示灯有出现吗？没有的话程式没在跑，双击桌面的 voicehist。有的话可能是热键被中文输入法吃掉了，改成 `ctrl+alt+space`。
 
 **指示灯变红但音量条不跳**
 麦克风没收到声音。到 设定 → 系统 → 音效 → 输入，确认预设装置正确、音量不是 0、没静音。
 
 **重复双击会开好几个吗**
-不会。有单例锁，第二次开启会跳提示告诉你已经在跑了。
+不会。有单例锁 —— 而且第二次点会直接把历史视窗叫出来，不是静静没反应。
 
 **关掉程式**
 系统匣图示右键 → 结束。显存和记忆体立刻释放。
@@ -193,7 +196,7 @@ Whisper 转中文时**预设不太加标点**（[已知问题](https://github.co
 `%USERPROFILE%\.voicehist\voicehist.log`
 
 **取消开机自动启动**
-删掉 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\VoiceInput.lnk`
+删掉 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\voicehist.lnk`
 
 ---
 

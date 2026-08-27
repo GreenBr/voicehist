@@ -99,7 +99,7 @@ class App:
         head = tk.Frame(root, bg=BG)
         head.pack(fill="x", padx=24, pady=(20, 6))
         tk.Label(head, text="设定", bg=BG, fg=FG, font=(FONT, 17, "bold")).pack(side="left")
-        tk.Label(head, text="改完按储存，重新启动 VoiceInput 生效",
+        tk.Label(head, text="改完按储存，重新启动 voicehist 生效",
                  bg=BG, fg=DIM, font=(FONT, 9)).pack(side="left", padx=(12, 0), pady=(7, 0))
 
         wrap = tk.Frame(root, bg=BG)
@@ -194,7 +194,7 @@ class App:
         try:
             json.dump(self.cfg, open(CFG, "w", encoding="utf-8"),
                       ensure_ascii=False, indent=2)
-            self.msg.config(text="已储存 — 重新启动 VoiceInput 後生效", fg=OK)
+            self.msg.config(text="已储存 — 重新启动 voicehist 後生效", fg=OK)
         except Exception as e:
             self.msg.config(text="储存失败：%s" % e, fg="#e5484d")
 
@@ -203,7 +203,7 @@ class App:
             os.remove(CFG)
         except Exception:
             pass
-        self.msg.config(text="已回复预设值 — 重新启动 VoiceInput 後生效，"
+        self.msg.config(text="已回复预设值 — 重新启动 voicehist 後生效，"
                              "重开这个视窗可看到新值", fg=OK)
 
 

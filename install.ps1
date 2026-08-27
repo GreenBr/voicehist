@@ -86,21 +86,20 @@ function New-Lnk($path, $script, $icon, $desc) {
     $l.Description      = $desc
     $l.Save()
 }
-New-Lnk "$dsk\VoiceInput.lnk"   "voice.py"        "voiceinput.ico"   "语音输入"
-New-Lnk "$dsk\VoiceHistory.lnk" "history_gui.py"  "voicehistory.ico" "语音历史"
+New-Lnk "$dskoicehist.lnk" "voice.py" "voiceinput.ico" "voicehist - 语音输入（点开待命，Ctrl+空白 开始讲话）"
 Say "  桌面捷径已建立" Green
 
 $ans = Read-Host "  要设定开机自动启动吗？(Y/n)"
 if ($ans -ne "n" -and $ans -ne "N") {
     $stp = [Environment]::GetFolderPath('Startup')
-    New-Lnk "$stp\VoiceInput.lnk" "voice.py" "voiceinput.ico" "语音输入(开机自动启动)"
+    New-Lnk "$stpoicehist.lnk" "voice.py" "voiceinput.ico" "voicehist（开机自动启动）"
     Say "  已设定开机自动启动" Green
 }
 
 Say ""
 Say "  安装完成！" Green
 Say ""
-Say "  双击桌面的 VoiceInput 启动（第一次会下载约 1.5GB 的模型，请等它跑完）"
+Say "  双击桌面的 voicehist 启动（第一次会下载约 1.5GB 的模型，请等它跑完）"
 Say "  启动后按 Ctrl+空白 开始讲话，再按一次或按 ESC 结束"
-Say "  历史纪录：双击 VoiceHistory，或从系统匣图示右键开启"
+Say "  历史与设定：系统匣图示右键，或再点一次桌面图示"
 Say ""

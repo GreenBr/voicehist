@@ -34,18 +34,26 @@ elif hasattr(sys.stdout, "reconfigure"):
 
 
 def ensure_single_instance():
-    """同一时间只跑一份。重复开启时直接跳提示并结束，不会开出第二个视窗。"""
+    """同一时间只跑一份。
+
+    但重复点图示不该是「什么都不做」—— 那样使用者会以为没反应。
+    既然已经在待命了，就把历史视窗叫出来，让这个图示同时是两个入口：
+      没在跑 -> 启动待命     已经在跑 -> 看历史
+    """
     k = ctypes.windll.kernel32
     k.CreateMutexW(None, False, "voicehist_singleton_mutex_v1")
-    if k.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            "voicehist 已经在执行中了。\n\n"
-            "萤幕右下角那个小指示灯就是它，直接按 Ctrl+空白 就能用。\n\n"
-            "要重开的话，先关掉原本那个再启动。",
-            "voicehist", 0x40)
-        return False
-    return True
+    if k.GetLastError() != 183:      # ERROR_ALREADY_EXISTS
+        return True
+    try:
+        import subprocess
+        subprocess.Popen([sys.executable, os.path.join(ROOT, "history_gui.py")],
+                         cwd=ROOT)
+    except Exception:
+        msg = ("voicehist 已经在待命了。" + chr(10) * 2 +
+               "右下角的指示灯就是它，直接按 Ctrl+空白 开始讲话。" + chr(10) +
+               "历史与设定都在系统匣图示右键。")
+        ctypes.windll.user32.MessageBoxW(0, msg, "voicehist", 0x40)
+    return False
 
 import numpy as np
 import sounddevice as sd

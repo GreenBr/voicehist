@@ -187,7 +187,7 @@ class App:
 
         if not recs:
             msg = ("找不到包含「%s」的纪录" % self.q.get().strip()) if kw else \
-                  "还没有任何纪录。\n\n启动 VoiceInput，按 Ctrl+空白 讲一句话就会出现在这里。"
+                  "还没有任何纪录。\n\n启动 voicehist，按 Ctrl+空白 讲一句话就会出现在这里。"
             lb = tk.Label(self.inner, text=msg, bg=BG, fg=DIM,
                           font=(FONT, 12), justify="left", pady=50)
             lb.pack(fill="x")
