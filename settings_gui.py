@@ -69,10 +69,18 @@ FIELDS = [
     ("restore_delay", "还原前等待秒数", "太短可能在贴上完成前就还原了，预设 0.35", "float", None),
     ("beep", "提示音", "开始／停止录音时的哔声", "bool", None),
 
-    ("__g", "指示灯", None, None, None),
-    ("indicator", "显示浮动指示灯", "关掉就只剩系统匣图示", "bool", None),
-    ("ui_scale", "高度／字体倍率", "预设 2.1", "float", None),
-    ("ui_width_scale", "宽度倍率", "预设 1.5", "float", None),
+    ("__g", "指示灯与系统匣", None, None, None),
+    ("indicator_mode", "指示灯显示方式",
+     "auto = 平常隐藏，按下热键录音时才浮出来，结束 2 秒後自动消失（预设）" + chr(10) +
+     "always = 一直显示" + chr(10) + "off = 完全不显示，只靠系统匣图示颜色看状态",
+     "choice", ["auto", "always", "off"]),
+    ("tray_status_color", "系统匣图示依状态变色",
+     "灰=待机、红=录音中、黄=转写中、绿=完成。滑鼠移上去也会显示文字状态", "bool", None),
+    ("wake_gap_seconds", "休眠侦测门槛（秒）",
+     "程式每 0.12 秒自检一次，两次相差超过这个秒数就判定系统刚睡醒、自动重挂热键。" + chr(10) +
+     "这是「合盖再打开热键没反应」的自动修复，预设 5", "float", None),
+    ("ui_scale", "指示灯高度／字体倍率", "预设 1.6", "float", None),
+    ("ui_width_scale", "指示灯宽度倍率", "预设 1.2", "float", None),
     ("indicator_pos", "指示灯位置", "br=右下 bl=左下 tr=右上 tl=左上（也可直接用滑鼠拖曳）",
      "choice", ["br", "bl", "tr", "tl"]),
 ]

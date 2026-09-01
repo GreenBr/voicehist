@@ -116,8 +116,14 @@ DEFAULT_CFG = {
     "beep": True,
     "sample_rate": 16000,
     "idle_unload_minutes": 5,   # 闲置这么久就释放显存；0 = 一直常驻
-    "indicator": True,
+    # auto  = 平常隐藏，录音／转写时才浮出来（预设）
+    # always= 一直显示
+    # off   = 完全不显示，只靠 tray 图示
+    "indicator_mode": "auto",
+    "indicator": True,        # 保留给旧设定档；False 等同 indicator_mode=off
     "indicator_pos": "br",
+    "tray_status_color": True,   # tray 图示依状态变色
+    "wake_gap_seconds": 5.0,     # 两次 tick 相差超过这秒数 = 系统睡过，自动重挂热键
     "ui_scale": 2.1,        # 高度／字体倍率（原本 3.0 的 70%）
     "ui_width_scale": 1.5,  # 宽度倍率（原本 3.0 的一半）
     "stop_key": "esc",        # 录音中按这个停止并转写（单键，不用按组合键）
@@ -168,16 +174,22 @@ class S:
     model_loaded = False
     quit = False
     cancelled = False      # 使用者按了取消键，这轮录音整个作废
+    force_show_until = 0.0 # tray 手动唤醒後，指示灯强制显示到这个时间点
 
 
 class Indicator:
     COLORS = {"idle": "#5a5f66", "rec": "#e5484d", "trans": "#f5a524",
               "done": "#30a46c", "cancel": "#8b929e"}
 
-    def __init__(self, root):
+    def __init__(self, root, app=None):
         self.root = root
-        sh = float(C.get("ui_scale", 2.1))          # 高度／字体
-        sw = float(C.get("ui_width_scale", 1.5))    # 宽度
+        self.app = app
+        self.tray = None
+        self._last_tick = time.time()
+        self._visible = True
+        self._tray_mode = None
+        sh = float(C.get("ui_scale", 1.6))          # 高度／字体
+        sw = float(C.get("ui_width_scale", 1.2))    # 宽度
         self.s = sh
         pxh = lambda v: max(1, int(round(v * sh)))
         pxw = lambda v: max(1, int(round(v * sw)))
@@ -196,8 +208,8 @@ class Indicator:
         pad = max(1, int(round(2 * sh)))
         self.oval = self.dot.create_oval(pad, pad, d - pad, d - pad,
                                          fill=self.COLORS["idle"], outline="")
-        # 字元数随宽高比一起缩，避免字体放大后把视窗撑宽
-        chars = max(6, int(round(13 * sw / sh)))
+        # 录音中只显示秒数、不显示「录音中」三个字，所以字元数可以很少
+        chars = max(5, int(round(8 * sw / sh)))
         self.txt = tk.Label(self.f, text="载入中…", fg="#c9ced6", bg="#16181d",
                             font=("Microsoft JhengHei UI", max(9, int(round(9 * sh)))),
                             width=chars, anchor="w")
@@ -211,6 +223,10 @@ class Indicator:
             w.bind("<Button-1>", self._down)
             w.bind("<B1-Motion>", self._drag)
         self._place()
+        # auto 模式平常是隐藏的，第一个 tick 会依状态决定要不要显示
+        if C.get("indicator_mode", "auto") != "always":
+            self.root.withdraw()
+            self._visible = False
         self.tick()
 
     def _place(self):
@@ -233,23 +249,66 @@ class Indicator:
         if S.quit:
             self.root.destroy()
             return
+        now = time.time()
+
+        # --- 零成本的睡眠侦测 ---
+        # tick 本该每 0.12 秒跑一次。两次差了好几秒，只有一种可能：系统刚睡过。
+        # Windows 休眠时会静默移除低阶键盘钩子，程式还活着但热键收不到，
+        # 所以这里顺手重挂一次。成本是一次减法。
+        gap = now - self._last_tick
+        self._last_tick = now
+        if gap > float(C.get("wake_gap_seconds", 5.0)) and self.app is not None:
+            print("[唤醒] tick 间隔 %.0f 秒，判定系统刚从休眠恢复，重挂热键" % gap)
+            self.app.rehook()
+
         m = S.mode
+
+        # --- 显示／隐藏 ---
+        mode_cfg = C.get("indicator_mode", "auto")
+        if not C.get("indicator", True):
+            mode_cfg = "off"
+        forced = now < S.force_show_until
+        want = (mode_cfg == "always") or (mode_cfg == "auto" and (m != "idle" or forced))
+        if want != self._visible:
+            self._visible = want
+            if want:
+                self.root.deiconify()
+                self.root.attributes("-topmost", True)
+                self.root.lift()
+            else:
+                self.root.withdraw()
+        elif want and forced:
+            # 手动唤醒期间，每个 tick 都往上顶，确保盖在别的视窗上面
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+
+        # --- 同步 tray 图示颜色与提示文字 ---
+        if self.tray is not None and C.get("tray_status_color", True) and m != self._tray_mode:
+            self._tray_mode = m
+            try:
+                self.tray.icon = make_tray_image(m)
+                self.tray.title = "voicehist - " + {
+                    "idle": "待机中" if S.model_loaded else "载入中",
+                    "rec": "录音中", "trans": "转写中",
+                    "done": "完成", "cancel": "已取消"}.get(m, "待机中")
+            except Exception:
+                pass
+
         if m == "rec":
-            # 常亮，不闪烁
             self.dot.itemconfig(self.oval, fill=self.COLORS["rec"])
-            self.txt.config(text="录音中  %.1fs" % (time.time() - S.t0))
+            self.txt.config(text="%.1fs" % (now - S.t0))
             self.bar.coords(self.fill, 0, 0,
                             min(self.barw, S.level * 120 * self.s), self.barh)
         else:
             self.dot.itemconfig(self.oval, fill=self.COLORS[m])
             if m == "idle":
-                self.txt.config(text="待机" if S.model_loaded else "载入中…")
+                self.txt.config(text="待机" if S.model_loaded else "载入中")
             elif m == "trans":
-                self.txt.config(text="转写中…")
+                self.txt.config(text="转写中")
             elif m == "cancel":
                 self.txt.config(text="已取消")
             else:
-                self.txt.config(text=(S.msg[:12] or "完成"))
+                self.txt.config(text=(S.msg[:8] or "完成"))
             self.bar.coords(self.fill, 0, 0, 0, self.barh)
         self.root.after(120, self.tick)
 
@@ -399,6 +458,26 @@ class App:
                 threading.Thread(target=self.work, args=(audio, dur, title),
                                  daemon=True).start()
 
+    def rehook(self):
+        """重挂全域热键。
+
+        系统休眠／合盖再打开後，Windows 会静默移除低阶键盘钩子（WH_KEYBOARD_LL），
+        程式本身没死 —— tray 在、指示灯在 —— 但再也收不到按键。这就是
+        「合盖回来 Ctrl+空白 没反应」的根因。unhook 再 hook 一次就好。
+        """
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+        keyboard.add_hotkey(C["hotkey"], self.toggle, suppress=False)
+        sk = C.get("stop_key")
+        if sk:
+            keyboard.on_press_key(sk, self.stop_if_recording, suppress=False)
+        ck = C.get("cancel_key")
+        if ck:
+            keyboard.on_press_key(ck, self.cancel, suppress=False)
+        print("[热键] 已挂载  开始/停止=%s  停止=%s  取消=%s" % (C["hotkey"], sk, ck))
+
     def cancel(self, _event=None):
         """取消键：把这轮整个丢掉。
 
@@ -518,33 +597,48 @@ class App:
         threading.Thread(target=r, daemon=True).start()
 
 
-def setup_tray():
-    """系统匣图示：右键可开历史、结束程式。左键双击直接开历史。"""
+def make_tray_image(mode):
+    """依状态画 tray 图示。16x16 的小图看不清形状，所以用整块颜色。"""
+    from PIL import Image, ImageDraw
+    col = {"idle": (140, 146, 158), "rec": (229, 72, 77),
+           "trans": (245, 165, 36), "done": (48, 163, 108),
+           "cancel": (110, 116, 128)}.get(mode, (140, 146, 158))
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([6, 6, 58, 58], fill=col + (255,))
+    # 中间挖一个麦克风形状（留白），待机时对比低、录音时最醒目
+    w = (255, 255, 255, 235)
+    d.rounded_rectangle([26, 16, 38, 38], radius=6, fill=w)
+    d.arc([19, 26, 45, 48], start=0, end=180, fill=w, width=4)
+    d.rectangle([30, 44, 34, 50], fill=w)
+    return img
+
+
+def setup_tray(app):
+    """系统匣图示。
+
+    左键双击 = 强制唤醒：重挂热键 + 指示灯浮上来 3 秒。
+    这是「合盖回来热键没反应」的一键解法，不用再结束程式跑去桌面重开。
+    右键选单：强制唤醒 / 开启语音历史 / 设定 / 状态 / 结束。
+    图示颜色由 Indicator.tick 依状态即时更新（灰待机、红录音、黄转写、绿完成）。
+    """
     try:
         import pystray
-        from PIL import Image
         import subprocess
     except ImportError as e:
         print("[匣图示] 略过（缺套件：%s）" % e)
         return None
-
-    ico = os.path.join(ROOT, "voiceinput.ico")
-    img = None
-    if os.path.exists(ico):
-        try:
-            img = Image.open(ico)
-        except Exception:
-            pass
-    if img is None:
-        from PIL import Image as _I, ImageDraw as _D
-        img = _I.new("RGBA", (64, 64), (0, 0, 0, 0))
-        _D.Draw(img).ellipse([8, 8, 56, 56], fill=(92, 106, 232, 255))
 
     def _spawn(script):
         try:
             subprocess.Popen([sys.executable, os.path.join(ROOT, script)], cwd=ROOT)
         except Exception as e:
             print("[匣图示] 开启 %s 失败：%s" % (script, e))
+
+    def wake(icon=None, item=None):
+        print("[唤醒] 由 tray 手动触发")
+        app.rehook()
+        S.force_show_until = time.time() + 3.0
 
     def open_hist(icon=None, item=None):
         _spawn("history_gui.py")
@@ -561,20 +655,22 @@ def setup_tray():
             pass
 
     menu = pystray.Menu(
-        pystray.MenuItem("开启语音历史", open_hist, default=True),
+        pystray.MenuItem("强制唤醒（重挂热键）", wake, default=True),
+        pystray.MenuItem("开启语音历史", open_hist),
         pystray.MenuItem("设定", open_settings),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(lambda i: "状态：%s" % {
             "idle": "待机中" if S.model_loaded else "载入中",
-            "rec": "录音中", "trans": "转写中", "done": "刚完成"}.get(S.mode, "待机中"),
+            "rec": "录音中", "trans": "转写中", "done": "刚完成",
+            "cancel": "已取消"}.get(S.mode, "待机中"),
                          None, enabled=False),
         pystray.MenuItem(lambda i: "热键：%s" % C["hotkey"], None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("结束", quit_app),
     )
-    icon = pystray.Icon("voicehist", img, "voicehist 语音输入", menu)
+    icon = pystray.Icon("voicehist", make_tray_image("idle"), "voicehist - 载入中", menu)
     threading.Thread(target=icon.run, daemon=True).start()
-    print("[匣图示] 已建立（右下角系统匣，右键可结束）")
+    print("[匣图示] 已建立（双击=强制唤醒，右键=选单）")
     return icon
 
 
@@ -602,25 +698,18 @@ def main():
 
     threading.Thread(target=app.get_model, daemon=True).start()
     threading.Thread(target=app.idle_watch, daemon=True).start()
-    keyboard.add_hotkey(hk, app.toggle, suppress=False)
-    if sk:
-        keyboard.on_press_key(sk, app.stop_if_recording, suppress=False)
-    ck = C.get("cancel_key")
-    if ck:
-        keyboard.on_press_key(ck, app.cancel, suppress=False)
-    tray = setup_tray()
+    app.rehook()
 
-    if C.get("indicator", True):
-        root = tk.Tk()
-        Indicator(root)
-        try:
-            root.mainloop()
-        except KeyboardInterrupt:
-            pass
-        S.quit = True
-    else:
-        while not S.quit:
-            time.sleep(0.3)
+    # tk 主回圈永远要跑：就算指示灯设成 off，睡眠侦测跟 tray 图示变色都靠 tick
+    root = tk.Tk()
+    ind = Indicator(root, app)
+    tray = setup_tray(app)
+    ind.tray = tray
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    S.quit = True
     if tray is not None:
         try:
             tray.stop()
