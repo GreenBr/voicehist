@@ -62,6 +62,28 @@ import keyboard
 import tkinter as tk
 
 
+def _patch_keyboard_listen():
+    """keyboard 0.13.5 的 _winkeyboard.listen() 把 NULL 指标（LPMSG()）传给 GetMessage。
+    平常没事 —— 钩子线程永远收不到讯息 —— 但 reinstall_hook() 用 WM_QUIT 让它退出时，
+    GetMessage 会往 NULL 写而 access violation，log 里多一段 traceback。换成配置真正的 MSG。"""
+    try:
+        from keyboard import _winkeyboard as w
+        from ctypes import byref
+
+        def listen(callback):
+            w.prepare_intercept(callback)
+            msg = w.MSG()
+            while w.GetMessage(byref(msg), 0, 0, 0) > 0:
+                w.TranslateMessage(byref(msg))
+                w.DispatchMessage(byref(msg))
+        w.listen = listen
+    except Exception:
+        pass
+
+
+_patch_keyboard_listen()
+
+
 def _add_cuda_dlls():
     """Windows 上 ctranslate2 要 cuBLAS/cuDNN 的 DLL。
     单靠 add_dll_directory 不够（ctranslate2 走自己的 LoadLibrary），
@@ -219,6 +241,60 @@ def gpu_power_limit():
         except (ValueError, IndexError):
             pass
     return (cur, dflt) if cur is not None else None
+
+
+def user_idle_seconds():
+    """使用者多久没碰键盘滑鼠（GetLastInputInfo）。"""
+    class LII(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    li = LII()
+    li.cbSize = ctypes.sizeof(LII)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+        return 0.0
+    return ((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000.0
+
+
+def hook_alive(timeout=0.6):
+    """键盘钩子还活著吗？
+
+    往系统注入一个 F24（没有任何程式用的键），看自己的钩子收不收得到。
+    Windows 会在钩子回呼太慢、或休眠等情况下**静默移除**低阶键盘钩子，程式不会收到任何通知，
+    表面上一切正常、tray 也在，就是按热键没反应。2026-09-02 晚上就这样死过一次，
+    tray 唤醒按了六次都没用 —— 因为 keyboard 套件的 unhook_all/add_hotkey 只动 Python 端的
+    handler 表，不会重新 SetWindowsHookEx。
+    """
+    got = threading.Event()
+
+    def cb(e):
+        if e.scan_code == 118 or (e.name or "").lower() == "f24":
+            got.set()
+    h = keyboard.hook(cb)
+    try:
+        # 走底层 press/release，不经 keyboard.send（send 会先「放开」它以为你按著的键）
+        keyboard._os_keyboard.press(118)
+        keyboard._os_keyboard.release(118)
+        return got.wait(timeout)
+    except Exception:
+        return False
+    finally:
+        try:
+            keyboard.unhook(h)
+        except Exception:
+            pass
+
+
+def reinstall_hook():
+    """真正重装钩子：让 keyboard 套件的监听线程退出（Windows 会顺手移除该线程装的钩子），
+    再让它开一条新线程重新 SetWindowsHookEx。"""
+    L = keyboard._listener
+    t = getattr(L, "listening_thread", None)
+    if t is not None and t.is_alive():
+        tid = getattr(t, "native_id", None)
+        if tid:
+            ctypes.windll.user32.PostThreadMessageW(int(tid), 0x0012, 0, 0)   # WM_QUIT
+        t.join(2.0)
+    L.listening = False
+    L.start_if_necessary()
 
 
 POWER_CAP_HINT = ("显卡功耗上限只有 %.0fW（这台接 USB-C 正常是 40W）。这状态下显存时脉掉到 810 MHz、"
@@ -521,6 +597,8 @@ class App:
         self.model = None
         self.device = None              # "cuda" / "cpu"，目前模型跑在哪
         self.last_use = time.time()
+        self._last_hookcheck = time.time()
+        self._prev_idle = None
 
     def _cpu_threads(self):
         n = int(C.get("cpu_threads") or 0)
@@ -596,14 +674,34 @@ class App:
         gc.collect()
 
     def idle_watch(self):
+        """每 20 秒一次的背景巡逻：闲置卸载模型 ＋ 键盘钩子自检。"""
         mins = C.get("idle_unload_minutes", 0)
-        if not mins:
-            return
         while not S.quit:
             time.sleep(20)
-            if (self.model is not None and S.mode == "idle"
+            if (mins and self.model is not None and S.mode == "idle"
                     and time.time() - self.last_use > mins * 60):
                 self.unload("闲置超过 %s 分钟，释放显存（下次按热键自动载回）" % mins)
+            self._hook_patrol()
+
+    def _hook_patrol(self):
+        """钩子自检的时机：
+        - 使用者离开 5 分钟以上又回来了 → 马上检查（休眠／久置最容易掉钩子）
+        - 平常每 60 秒一次，但只在使用者 3 秒～10 分钟没碰键盘时做
+          （正在打字时不注入按键；离开太久也不注入，免得害萤幕永远不睡）"""
+        try:
+            idle = user_idle_seconds()
+        except Exception:
+            return
+        now = time.time()
+        returned = self._prev_idle is not None and self._prev_idle > 300 and idle < 20
+        due = now - self._last_hookcheck > 60 and 3 < idle < 600
+        self._prev_idle = idle
+        if S.mode != "idle" or not (returned or due):
+            return
+        self._last_hookcheck = now
+        if not hook_alive():
+            print("[热键] 自检失败：钩子已被 Windows 移除，重新安装")
+            self.rehook()
 
     def toggle(self):
         with self.lock:
@@ -633,6 +731,14 @@ class App:
         程式本身没死 —— tray 在、指示灯在 —— 但再也收不到按键。这就是
         「合盖回来 Ctrl+空白 没反应」的根因。unhook 再 hook 一次就好。
         """
+        # 先看 OS 层的钩子还活著没；死了就整个重装，不然下面的 add_hotkey 只是白做
+        reinstalled = False
+        if not hook_alive():
+            try:
+                reinstall_hook()
+                reinstalled = True
+            except Exception as e:
+                print("[热键] 重装钩子失败：%s" % e)
         try:
             keyboard.unhook_all()
         except Exception:
@@ -644,7 +750,11 @@ class App:
         ck = C.get("cancel_key")
         if ck:
             keyboard.on_press_key(ck, self.cancel, suppress=False)
-        print("[热键] 已挂载  开始/停止=%s  停止=%s  取消=%s" % (C["hotkey"], sk, ck))
+        ok = hook_alive()
+        print("[热键] 已挂载  开始/停止=%s  停止=%s  取消=%s  自检：%s%s"
+              % (C["hotkey"], sk, ck, "OK" if ok else "失败！热键收不到，请结束程式重开",
+                 "（钩子曾被移除，已重装）" if reinstalled else ""))
+        self._last_hookcheck = time.time()
 
     def cancel(self, _event=None):
         """取消键：把这轮整个丢掉。
