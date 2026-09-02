@@ -198,6 +198,33 @@ def gpu_mem_status():
         return None
 
 
+def gpu_power_limit():
+    """回传 (目前功耗上限 W, 预设上限 W)，查不到回 None。
+
+    2026-09-02 实测（Legion 5 15ACH6，只用 USB-C 供电）：正常上限 40W，转写是音讯的 0.1～0.2 倍。
+    EC 偶尔会卡在 20W —— 显存时脉掉到 810 MHz、转写慢 4 倍 —— 拔掉 USB-C 等几秒再插回去就回 40W。
+    用 nvidia-smi 锁显存时脉（-lmc）实测反而更慢，别试。
+    """
+    try:
+        out = _run_hidden(["nvidia-smi", "-q", "-d", "POWER"], 6)
+    except Exception:
+        return None
+    cur = dflt = None
+    for line in out.splitlines():
+        try:
+            if "Current Power Limit" in line and cur is None:
+                cur = float(line.split(":")[1].split()[0])
+            elif "Default Power Limit" in line and dflt is None:
+                dflt = float(line.split(":")[1].split()[0])
+        except (ValueError, IndexError):
+            pass
+    return (cur, dflt) if cur is not None else None
+
+
+POWER_CAP_HINT = ("显卡功耗上限只有 %.0fW（这台接 USB-C 正常是 40W）。这状态下显存时脉掉到 810 MHz、"
+                  "转写慢 4 倍。拔掉 USB-C 充电线等 5 秒再插回去就会恢复。")
+
+
 def _pid_name(pid):
     if pid == os.getpid():
         return "voicehist"
@@ -513,6 +540,9 @@ class App:
         used, total = st
         free = total - used
         print("[显存] 载入前其它程式已用 %d / %d MB，剩 %d MB" % (used, total, free))
+        pl = gpu_power_limit()
+        if pl and pl[0] <= 25:
+            print("[功耗] " + POWER_CAP_HINT % pl[0])
         if need and free < need:
             hogs = "、".join("%s %dMB" % h for h in gpu_mem_hogs()) or "（查不到）"
             print("[显存] 剩不到 %d MB，硬塞会被换到主记忆体、慢 10 倍以上，这次改用 CPU（%d 线程）。"
@@ -745,6 +775,9 @@ class App:
         正常是音讯长度的 0.05～0.2 倍；超过 0.5 倍几乎都是显存被挤爆。"""
         st = gpu_mem_status()
         msg = "  [慢] 这次转写 %.0f 秒，是音讯长度的 %.1f 倍（正常 0.1～0.2 倍）。" % (t_tr, ratio)
+        pl = gpu_power_limit()
+        if pl and pl[0] <= 25:
+            msg += POWER_CAP_HINT % pl[0]
         if self.device == "cpu":
             msg += "目前在 CPU 上跑（载入时显存不够）。"
         elif st:

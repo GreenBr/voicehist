@@ -209,7 +209,7 @@ Whisper 转中文时**预设不太加标点**（[已知问题](https://github.co
 
 **转写突然变很慢（讲 30 秒要等 30 秒以上）**
 几乎都是显存被别的程式挤满了。4GB 显卡上 DaVinci Resolve 一开就吃 2.7GB，Chrome、dwm 再各拿几百 MB，模型被 Windows 换到主记忆体，速度掉 10～60 倍（实测 37 秒的话从 3 秒变 254 秒）。voicehist 会在 log 写一行 `[慢] …显存 3755 / 4096 MB，最占的是 Resolve 722MB…` 告诉你是谁；载入时剩不到 `min_free_vram_mb` 就自动改跑 CPU。关掉那个程式，下次载入会自动回 GPU。
-另一个原因是显卡被限功耗：`nvidia-smi -q -d POWER` 看 `Current Power Limit`，Legion 笔电接到瓦数不够的变压器（或 USB-C 充电）时韧体会把 GPU 压到 20W（预设 60W），转写慢 3～4 倍。换回原厂变压器就恢复。
+另一个原因是显卡被限功耗：`nvidia-smi -q -d POWER` 看 `Current Power Limit`。Legion 5 15ACH6 只用 USB-C 供电时正常上限是 40W，转写照样是几秒；但 EC 偶尔会卡在 20W，显存时脉掉到 810 MHz、转写慢 4 倍。voicehist 载入模型时会检查，卡住就在 log 印 `[功耗] …`。解法是**拔掉 USB-C 充电线等 5 秒再插回去**，上限就回 40W。用 `nvidia-smi -lmc` 锁显存时脉实测反而更慢，别试。
 
 **指示灯变红但音量条不跳**
 麦克风没收到声音。到 设定 → 系统 → 音效 → 输入，确认预设装置正确、音量不是 0、没静音。
