@@ -48,6 +48,10 @@ FIELDS = [
     ("model", "模型档次", "medium 是 4GB 显卡的甜蜜点；small 较快但中文会掉准", "choice",
      ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]),
     ("beam_size", "beam size", "1 最快。实测调大只会变慢，文字不会变好", "int", None),
+    ("compute_type", "GPU 精度", "int8_float16 显存约省一半、文字几乎一样，4GB 显卡跟 Resolve／Chrome 共存的关键；float16 是旧预设", "choice",
+     ["int8_float16", "float16", "int8"]),
+    ("min_free_vram_mb", "显存剩不到几 MB 就改跑 CPU",
+     "载入时显存剩太少，模型会被换到主记忆体、慢 10 倍以上，CPU 反而快。预设 1500，0 = 永远硬上 GPU", "int", None),
 
     ("__g", "语音与断句", None, None, None),
     ("language", "辨识语言", "留空 = 自动侦测（中英混用建议留空）。也可填 zh 或 en 强制", "text", None),

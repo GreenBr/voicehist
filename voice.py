@@ -90,7 +90,6 @@ def _add_cuda_dlls():
 
 
 _add_cuda_dlls()
-from faster_whisper import WhisperModel
 
 ROOT = os.path.join(os.path.expanduser("~"), ".voicehist")
 HIST = os.path.join(ROOT, "history.jsonl")
@@ -128,6 +127,17 @@ DEFAULT_CFG = {
     "ui_width_scale": 1.5,  # 宽度倍率（原本 3.0 的一半）
     "stop_key": "esc",        # 录音中按这个停止并转写（单键，不用按组合键）
     "cancel_key": "delete",   # 录音／转写中按这个直接丢弃，不转写也不留纪录
+    # --- GPU 精度与显存（2026-09-02 加，起因：DaVinci Resolve 开著时转写从 3 秒变 90 秒）---
+    # int8_float16：权重压成 int8、计算仍用 float16，显存约省一半，文字几乎一样。
+    # 4GB 显卡要跟 Resolve／Chrome／dwm 共存，这是关键。float16 是旧预设。
+    "compute_type": "int8_float16",
+    # 转写完把 GPU 工作缓冲区还给显卡。ctranslate2 旧预设 cub_caching 会一直抓著不放，
+    # 闲置时多占好几百 MB。
+    "cuda_allocator": "cuda_malloc_async",
+    # 载入时显存剩不到这么多 MB 就改跑 CPU。硬塞进被挤满的显卡，模型会被换到主记忆体，
+    # 实测慢 10～60 倍；CPU 反而快得多。0 = 永远硬上 GPU
+    "min_free_vram_mb": 1500,
+    "cpu_threads": 0,         # CPU 模式用几条线程；0 = 实体核心数
 }
 
 
@@ -143,6 +153,10 @@ def load_cfg():
 
 
 C = load_cfg()
+
+# 要在 import ctranslate2 之前设好（faster_whisper 会一并载入 ctranslate2）
+os.environ.setdefault("CT2_CUDA_ALLOCATOR", str(C.get("cuda_allocator") or "cuda_malloc_async"))
+from faster_whisper import WhisperModel
 
 
 def beep(f, ms):
@@ -163,6 +177,74 @@ def fg_title():
         return b.value
     except Exception:
         return ""
+
+
+def _run_hidden(args, timeout=8):
+    """跑外部指令但不弹黑窗（pythonw 下 subprocess 预设会闪一个 console）。"""
+    import subprocess
+    return subprocess.check_output(args, text=True, timeout=timeout,
+                                   encoding="utf-8", errors="replace",
+                                   creationflags=0x08000000)   # CREATE_NO_WINDOW
+
+
+def gpu_mem_status():
+    """回传 (已用 MB, 总量 MB)。没有 nvidia-smi（无 N 卡）就回 None。"""
+    try:
+        out = _run_hidden(["nvidia-smi", "--query-gpu=memory.used,memory.total",
+                           "--format=csv,noheader,nounits"], 6)
+        used, total = [float(x) for x in out.strip().split(",")[:2]]
+        return int(used), int(total)
+    except Exception:
+        return None
+
+
+def _pid_name(pid):
+    if pid == os.getpid():
+        return "voicehist"
+    try:
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return "pid%d" % pid
+        try:
+            n = ctypes.c_ulong(512)
+            b = ctypes.create_unicode_buffer(512)
+            if k.QueryFullProcessImageNameW(h, 0, b, ctypes.byref(n)):
+                return os.path.splitext(os.path.basename(b.value))[0]
+        finally:
+            k.CloseHandle(h)
+    except Exception:
+        pass
+    return "pid%d" % pid
+
+
+def gpu_mem_hogs(top=5):
+    """谁在吃显存，由大到小回传 [(程式名, MB), ...]。
+
+    WDDM 下 nvidia-smi 看不到各行程的用量（全部显示 N/A），
+    要问 Windows 效能计数器 GPU Process Memory。typeperf 抓一个样本约 1 秒。
+    """
+    import csv, re
+    try:
+        out = _run_hidden(["typeperf", r"\GPU Process Memory(*)\Local Usage", "-sc", "1"], 10)
+    except Exception:
+        return []
+    lines = [l for l in out.splitlines() if l.startswith('"')]
+    if len(lines) < 2:
+        return []
+    hdr = next(csv.reader([lines[0]]))
+    vals = next(csv.reader([lines[-1]]))
+    by_pid = {}
+    for h, v in zip(hdr[1:], vals[1:]):
+        m = re.search(r"pid_(\d+)_", h)
+        if not m:
+            continue
+        try:
+            by_pid[int(m.group(1))] = by_pid.get(int(m.group(1)), 0.0) + float(v)
+        except ValueError:
+            pass
+    rows = sorted(by_pid.items(), key=lambda kv: -kv[1])[:top]
+    return [(_pid_name(p), int(b / 1048576)) for p, b in rows if b > 20 * 1048576]
 
 
 class S:
@@ -393,10 +475,12 @@ def join_segments(segs):
     return text
 
 
-def save_history(text, lang, dur, title, pasted):
+def save_history(text, lang, dur, title, pasted, extra=None):
     rec = {"ts": int(time.time()), "time": time.strftime("%Y-%m-%d %H:%M:%S"),
            "text": text, "lang": lang, "seconds": round(dur, 1),
            "window": title, "pasted": pasted}
+    if extra:
+        rec.update(extra)      # trans_s / load_s / device：转写花了多久、在哪跑，方便事後查慢的原因
     with open(HIST, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -406,22 +490,80 @@ class App:
         self.rec = Rec(C["sample_rate"])
         self.on = False
         self.lock = threading.Lock()
+        self.mlock = threading.Lock()   # 载入／卸载模型时互斥
         self.model = None
+        self.device = None              # "cuda" / "cpu"，目前模型跑在哪
         self.last_use = time.time()
 
-    def get_model(self):
-        if self.model is None:
-            print("[载入] %s 模型…" % C["model"])
+    def _cpu_threads(self):
+        n = int(C.get("cpu_threads") or 0)
+        return n or max(4, (os.cpu_count() or 8) // 2)
+
+    def _pick_device(self):
+        """显存够就 GPU，不够就 CPU。
+
+        2026-09-02 实测：DaVinci Resolve 开著时 4GB 显卡剩不到 1.2GB，
+        模型硬塞进去会被 Windows 换到主记忆体，37 秒的话转写 254 秒（原本 3 秒）。
+        这种时候 CPU 反而快得多，而且不会拖慢 Resolve。
+        """
+        need = int(C.get("min_free_vram_mb") or 0)
+        st = gpu_mem_status()
+        if st is None:
+            return "cuda"        # 没 nvidia-smi 就照旧硬试 GPU，失败会自己退 CPU
+        used, total = st
+        free = total - used
+        print("[显存] 载入前其它程式已用 %d / %d MB，剩 %d MB" % (used, total, free))
+        if need and free < need:
+            hogs = "、".join("%s %dMB" % h for h in gpu_mem_hogs()) or "（查不到）"
+            print("[显存] 剩不到 %d MB，硬塞会被换到主记忆体、慢 10 倍以上，这次改用 CPU（%d 线程）。"
+                  "最占显存：%s。关掉它们之後下次载入会自动回 GPU。"
+                  % (need, self._cpu_threads(), hogs))
+            return "cpu"
+        return "cuda"
+
+    def _load(self, dev):
+        """依序尝试：GPU 指定精度 → GPU float16 → CPU int8。"""
+        ct = str(C.get("compute_type") or "int8_float16")
+        tries = []
+        if dev == "cuda":
+            tries.append(("cuda", ct))
+            if ct != "float16":
+                tries.append(("cuda", "float16"))
+        tries.append(("cpu", "int8"))
+        last = None
+        for d, c in tries:
+            t = time.time()
             try:
-                self.model = WhisperModel(C["model"], device="cuda", compute_type="float16")
-                print("[载入] %s @ GPU" % C["model"])
+                m = WhisperModel(C["model"], device=d, compute_type=c,
+                                 cpu_threads=self._cpu_threads())
+                print("[载入] %s @ %s/%s  %.1fs" % (C["model"], "GPU" if d == "cuda" else "CPU",
+                                                   c, time.time() - t))
+                self.device = d
+                return m
             except Exception as e:
-                print("[载入] GPU 不可用（%s），改 CPU：%s" % (type(e).__name__, str(e)[:100]))
-                self.model = WhisperModel(C["model"], device="cpu", compute_type="int8")
-                print("[载入] %s @ CPU" % C["model"])
-            S.model_loaded = True
-        self.last_use = time.time()
-        return self.model
+                last = e
+                print("[载入] %s/%s 失败（%s：%s）" % (d, c, type(e).__name__, str(e)[:120]))
+        raise last
+
+    def get_model(self):
+        with self.mlock:
+            if self.model is None:
+                print("[载入] %s 模型…" % C["model"])
+                self.model = self._load(self._pick_device())
+                S.model_loaded = True
+            self.last_use = time.time()
+            return self.model
+
+    def unload(self, why):
+        with self.mlock:
+            if self.model is None:
+                return
+            print("[卸载] %s" % why)
+            self.model = None
+            self.device = None
+            S.model_loaded = False
+        import gc
+        gc.collect()
 
     def idle_watch(self):
         mins = C.get("idle_unload_minutes", 0)
@@ -431,11 +573,7 @@ class App:
             time.sleep(20)
             if (self.model is not None and S.mode == "idle"
                     and time.time() - self.last_use > mins * 60):
-                print("[卸载] 闲置超过 %s 分钟，释放显存（下次按热键自动载回）" % mins)
-                self.model = None
-                S.model_loaded = False
-                import gc
-                gc.collect()
+                self.unload("闲置超过 %s 分钟，释放显存（下次按热键自动载回）" % mins)
 
     def toggle(self):
         with self.lock:
@@ -517,13 +655,17 @@ class App:
             print("  → 太短，忽略\n")
             return
         try:
+            t_load = time.time()
             m = self.get_model()
+            t_load = time.time() - t_load
+            t_tr = time.time()
             segs, info = m.transcribe(audio, language=C["language"],
                                       beam_size=int(C.get("beam_size", 1)),
                                       initial_prompt=C.get("initial_prompt") or None,
                                       vad_filter=True,
                                       vad_parameters={"min_silence_duration_ms": 500})
-            text = join_segments(segs)
+            text = join_segments(segs)      # segments 是 lazy generator，这里才真的算完
+            t_tr = time.time() - t_tr
             lang = info.language
         except Exception as e:
             S.msg = "转写失败"
@@ -581,13 +723,44 @@ class App:
                 except Exception as e:
                     print("  [注意] 剪贴板还原失败：%s" % e)
 
-        save_history(text, lang, dur, title, pasted)
+        save_history(text, lang, dur, title, pasted,
+                     {"trans_s": round(t_tr, 1), "load_s": round(t_load, 1), "device": self.device})
         self.last_use = time.time()
         S.msg = text
         S.mode = "done"
         self._back()
+        ratio = t_tr / dur if dur else 0.0
         print("  → [%s] %s" % (lang, text))
-        print("     %s ｜ %s\n" % ("已贴上" if pasted else "未贴上（已存历史+剪贴板）", title[:40]))
+        timing = "⏱ 转写 %.1fs（音讯的 %.2f 倍，%s）" % (
+            t_tr, ratio, "GPU" if self.device == "cuda" else "CPU")
+        if t_load > 0.5:
+            timing += "，载入 %.1fs" % t_load
+        print("     %s ｜ %s ｜ %s\n" % ("已贴上" if pasted else "未贴上（已存历史+剪贴板）",
+                                         timing, title[:40]))
+        if t_tr > 8 and ratio > 0.5:
+            threading.Thread(target=self._explain_slow, args=(t_tr, ratio), daemon=True).start()
+
+    def _explain_slow(self, t_tr, ratio):
+        """转写慢得不正常时，把原因写进 log：谁占了显存、要不要改跑 CPU。
+        正常是音讯长度的 0.05～0.2 倍；超过 0.5 倍几乎都是显存被挤爆。"""
+        st = gpu_mem_status()
+        msg = "  [慢] 这次转写 %.0f 秒，是音讯长度的 %.1f 倍（正常 0.1～0.2 倍）。" % (t_tr, ratio)
+        if self.device == "cpu":
+            msg += "目前在 CPU 上跑（载入时显存不够）。"
+        elif st:
+            used, total = st
+            hogs = gpu_mem_hogs()
+            msg += "显存 %d / %d MB" % (used, total)
+            if hogs:
+                msg += "，最占的是 " + "、".join("%s %dMB" % h for h in hogs)
+            msg += "。4GB 卡被挤满时模型会被换到主记忆体，速度掉 10 倍以上。"
+            need = int(C.get("min_free_vram_mb") or 0)
+            if need and total - used < need:
+                msg += " 已先卸载模型，下次载入会重新判断改用 CPU。"
+                print(msg)
+                self.unload("显存吃紧，下次载入重新选 GPU/CPU")
+                return
+        print(msg)
 
     def _back(self):
         def r():
